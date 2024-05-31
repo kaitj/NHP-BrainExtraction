@@ -1,3 +1,5 @@
+"""Module associated with Torch datasets."""
+
 from __future__ import annotations
 
 import os
@@ -71,7 +73,7 @@ class VolumeDataset(data.Dataset):
             bfld[np.isnan(bfld)] = 1
             bfld[np.isinf(bfld)] = 1
             bfld = torch.from_numpy(bfld)
-            out.append(blfd)
+            out.append(bfld)
 
         if self.brainmask_files:
             brainmask_nii = nib.load(
@@ -115,7 +117,7 @@ class BlockDataset(data.Dataset):
         brainmask: torch.Tensor | None = None,
         num_slice: int = 3,
         rescale_dim: float | int = 256,
-    ):
+    ) -> None:
         super(BlockDataset, self).__init__()
 
         # Check masks align
@@ -128,7 +130,7 @@ class BlockDataset(data.Dataset):
 
         self.raw_img = self._nn_interpolate(
             raw_img,
-            rescale_factor=rescale_factor,
+            rescale_factor=self.rescale_factor,
             mode="trilinear",
             align_corners=False,
         )
@@ -177,7 +179,14 @@ class BlockDataset(data.Dataset):
             for idx in range(dim_length - self.num_slice + 1)
         ]
 
-    def get_one_directory(self, axis=0):
+    def get_one_directory(
+        self, axis: int = 0
+    ) -> tuple[
+        list[torch.Tensor | tuple[torch.Tensor, ...]],
+        list[range],
+        NDArray,
+    ]:
+        """Return data, range, and weights associated with one dataset."""
         if axis == 0:
             ind = range(0, len(self.slist0))
             slist = self.slist0
@@ -192,12 +201,10 @@ class BlockDataset(data.Dataset):
             slist = self.slist2
 
         slice_weight = np.zeros(slist[-1][-1] + 1)
-        for l in slist:
-            slice_weight[l] += 1
+        for lst in slist:
+            slice_weight[lst] += 1
 
-        slice_data = list()
-        for i in ind:
-            slice_data.append(self.__getitem__(i))
+        slice_data = [self.__getitem__(idx) for idx in ind]
 
         return slice_data, slist, slice_weight
 
@@ -305,7 +312,9 @@ class BlockDataset(data.Dataset):
 #         corrected_img_in="../site-ucdavis/TrainT1w",
 #         brainmask_in="../site-ucdavis/TrainMask",
 #     )
-#     volume_loader = data.DataLoader(dataset=volume_dataset, batch_size=1, shuffle=True)
+#     volume_loader = data.DataLoader(
+#        dataset=volume_dataset, batch_size=1, shuffle=True
+#     )
 #     for i, (corrected_img, brainmask) in enumerate(volume_loader):
 #         block_dataset = BlockDataset(
 #             raw_img=corrected_img,

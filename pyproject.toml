@@ -61,6 +61,7 @@ select = ["ANN", "D", "E", "F", "I"]
 ignore = [
     "ANN101", # self should not be annotated.
     "ANN102", # cls should not be annotated.
+    "D107",   # ignore missing docstring in `__init__`
 ]
 fixable = ["ALL"]
 unfixable = []
