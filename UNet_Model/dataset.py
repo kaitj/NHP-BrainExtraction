@@ -1,306 +1,321 @@
-import torch
-import torch.utils.data as data
-import torch.nn as nn
-import scipy.io as io
-import numpy as np
+from __future__ import annotations
+
+import os
+from typing import Any
+
 import nibabel as nib
-import os, sys
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.utils.data as data
+from nibabel.arrayproxy import ArrayProxy
+from numpy.typing import NDArray
+
 
 class VolumeDataset(data.Dataset):
-    def __init__(self,
-        rimg_in=None,
-        cimg_in=None,
-        bmsk_in=None,
-        transform=None,
-        debug=True
-                ):
+    """Representation of a dataset of volumes."""
+
+    def __init__(
+        self,
+        raw_img_in: str | None = None,
+        corrected_img_in: str | None = None,
+        brainmask_in: str | None = None,
+        debug: bool = True,
+    ) -> None:
         super(VolumeDataset, self).__init__()
 
-        # Raw Images
-        self.rimg_in=rimg_in
-        if isinstance(rimg_in, type(None)):
-            self.rimg_dir=None
-            self.rimg_files=None
-        else:
-            if isinstance(rimg_in, str) and os.path.isdir(rimg_in):
-                self.rimg_dir=rimg_in
-                self.rimg_files=os.listdir(rimg_in)
-                self.rimg_files.sort()
-            elif isinstance(rimg_in, str) and os.path.isfile(rimg_in):
-                rimg_dir, rimg_file=os.path.split(rimg_in)
-                self.rimg_dir=rimg_dir
-                self.rimg_files=[rimg_file]
-            else:
-                print("Invalid rimg_in")
-                sys.exit(1)
+        self.raw_img_dir, self.raw_img_files = self._set_img_attrs(raw_img_in)
+        self.corrected_img_dir, self.corrected_img_files = self._set_img_attrs(
+            corrected_img_in
+        )
+        self.brainmask_dir, self.brainmask_files = self._set_img_attrs(brainmask_in)
 
-        # Corrected Images
-        self.cimg_in=cimg_in
-        if isinstance(cimg_in, type(None)):
-            self.cimg_dir=None
-            self.cimg_files=None
-        else:
-            if isinstance(cimg_in, str) and os.path.isdir(cimg_in):
-                self.cimg_dir=cimg_in
-                self.cimg_files=os.listdir(cimg_in)
-                self.cimg_files.sort()
-            elif isinstance(cimg_in, str) and os.path.isfile(cimg_in):
-                cimg_dir, cimg_file=os.path.split(cimg_in)
-                self.cimg_dir=cimg_dir
-                self.cimg_files=[cimg_file]
-            else:
-                print("Invalid cimg_in")
-                sys.exit(1)
+        # Current image variables
+        self.cur_raw_img_nii = None
+        self.cur_corrected_img_nii = None
+        self.cur_brainmask_nii = None
 
-        # Brain Masks
-        self.bmsk_in=bmsk_in
-        if isinstance(bmsk_in, type(None)):
-            self.bmsk_dir=None
-            self.bmsk_files=None
-        else:
-            if isinstance(bmsk_in, str) and os.path.isdir(bmsk_in):
-                self.bmsk_dir=bmsk_in
-                self.bmsk_files=os.listdir(bmsk_in)
-                self.bmsk_files.sort()
-            elif isinstance(bmsk_in, str) and os.path.isfile(bmsk_in):
-                bmsk_dir, bmsk_file=os.path.split(bmsk_in)
-                self.bmsk_dir=bmsk_dir
-                self.bmsk_files=[bmsk_file]
-            else:
-                print("Invalid bmsk_in")
-                sys.exit(1)
+        # Debug flag
+        self.debug = debug
 
-        self.cur_rimg_nii=None
-        self.cur_cimg_nii=None
-        self.cur_bmsk_nii=None
+    def __len__(self) -> int:
+        """Get number of corrected image files."""
+        return len(self.corrected_img_files) if self.corrected_img_files else 0
 
-        self.debug=debug
-
-    def getCurRimgNii(self):
-        return self.cur_rimg_nii
-
-    def getCurCimgNii(self):
-        return self.cur_cimg_nii
-
-    def getCurBmskNii(self):
-        return self.cur_bmsk_nii
-
-    def __len__(self):
-        return len(self.cimg_files)
-
-    def __getitem__(self, index):
+    def __getitem__(self, idx: int) -> list[torch.Tensor]:
+        """Get Tensor representation of images at index."""
         if self.debug:
-            if isinstance(self.rimg_files, list):
-                print(self.rimg_files[index])
-            if isinstance(self.cimg_files, list):
-                print(self.cimg_files[index])
-            if isinstance(self.bmsk_files, list):
-                print(self.bmsk_files[index])
+            print(self.raw_img_files[idx] if self.raw_img_files else "")
+            print(self.corrected_img_files[idx] if self.corrected_img_files else "")
+            print(self.brainmask_files[idx] if self.brainmask_files else "")
 
-        Out=list()
-        if isinstance(self.rimg_files, list):
-            rimg_nii=nib.load(os.path.join(self.rimg_dir, self.rimg_files[index]))
-            rimg=np.array(rimg_nii.get_data(), dtype=np.float32)
-            # 0-1 Normalization
-            rimg=(rimg-rimg.min())/(rimg.max()-rimg.min())
-            rimg=torch.from_numpy(rimg)
-            Out.append(rimg)
+        out: list[torch.Tensor] = []
+        if self.raw_img_files:
+            raw_img_nii = nib.load(
+                os.path.join(self.raw_img_dir, self.raw_img_files[idx])
+            )
+            raw_img = self._normalize_img(raw_img_nii.dataobj)
+            out.append(torch.from_numpy(raw_img))
+            self.cur_raw_img_nii = raw_img_nii
 
-            self.cur_rimg_nii=rimg_nii
+        if self.corrected_img_files:
+            corrected_img_nii = nib.load(
+                os.path.join(self.corrected_img_dir, self.corrected_img_files[idx])
+            )
+            corrected_img = self._normalize_img(corrected_img_nii.dataobj)
+            out.append(torch.from_numpy(corrected_img))
+            self.cur_corrected_img_nii = corrected_img_nii
 
-        if isinstance(self.cimg_files, list):
-            cimg_nii=nib.load(os.path.join(self.cimg_dir, self.cimg_files[index]))
-            cimg=np.array(cimg_nii.get_data(), dtype=np.float32)
-            # 0-1 Normalization
-            cimg=(cimg-cimg.min())/(cimg.max()-cimg.min())
-            cimg=torch.from_numpy(cimg)
-            Out.append(cimg)
+        if "raw_img" in locals() and "corrected_img" in locals():
+            bfld = corrected_img / raw_img
+            bfld[np.isnan(bfld)] = 1
+            bfld[np.isinf(bfld)] = 1
+            bfld = torch.from_numpy(bfld)
+            out.append(blfd)
 
-            self.cur_cimg_nii=cimg_nii
+        if self.brainmask_files:
+            brainmask_nii = nib.load(
+                os.path.join(self.brainmask_dir, self.brainmask_files[idx])
+            )
+            brainmask = torch.from_numpy(brainmask_nii.dataobj)
+            out.append(brainmask)
+            self.cur_brainmask_nii = brainmask_nii
 
-        if "rimg" in locals() and "cimg" in locals():
-            bfld=cimg/rimg
-            bfld[np.isnan(bfld)]=1
-            bfld[np.isinf(bfld)]=1
-            bfld=torch.from_numpy(bfld)
-            Out.append(blfd)
+        return out[-1] if len(out) == 1 else tuple(out)
 
+    def _set_img_attrs(
+        self, img_in: str | None
+    ) -> tuple[None, ...] | tuple[str, list[str]]:
+        """Internal function to check and set image attributes."""
+        if img_in is None:
+            return None, None
 
-        if isinstance(self.bmsk_files, list):
-            bmsk_nii=nib.load(os.path.join(self.bmsk_dir, self.bmsk_files[index]))
-            bmsk=np.array(bmsk_nii.get_data()>0, dtype=np.int64)
-            bmsk=torch.from_numpy(bmsk)
-            Out.append(bmsk)
+        if isinstance(img_in, str):
+            if os.path.isdir(img_in):
+                return img_in, sorted(os.listdir(img_in))
+            elif os.path.isfile(img_in):
+                img_dir, img_file = os.path.split(img_in)
+                return img_dir, [img_file]
 
-            self.cur_bmsk_nii=bmsk_nii
+        raise ValueError(f"Invalid {img_in}")
 
-        if len(Out)==1:
-            Out=Out[0]
-        else:
-            Out=tuple(Out)
-        return Out
+    def _normalize_img(self, dataobj: ArrayProxy | NDArray) -> NDArray:
+        """Internal function to perform image normalization."""
+        dataobj = np.array(dataobj)
+        return (dataobj - dataobj.min()) / (dataobj.max() - dataobj.min())
+
 
 class BlockDataset(data.Dataset):
-    def __init__(self,
-        rimg=None,
-        bfld=None,
-        bmsk=None,
-        num_slice=3,
-        rescale_dim=256):
+    """Representation of a block dataset."""
+
+    def __init__(
+        self,
+        raw_img: torch.Tensor | None = None,
+        bfld: torch.Tensor | None = None,
+        brainmask: torch.Tensor | None = None,
+        num_slice: int = 3,
+        rescale_dim: float | int = 256,
+    ):
         super(BlockDataset, self).__init__()
-        
-        if isinstance(bmsk, torch.Tensor) and rimg.shape!=bmsk.shape:
-            print("Invalid shape of image")
+
+        # Check masks align
+        if brainmask and raw_img and brainmask.shape != raw_img.shape:
+            raise ValueError("Shape mismatch between brainmask and raw_img")
+
+        self.raw_shape = raw_img.data[0].shape
+        self.rescale_factor = float(rescale_dim) / torch.tensor(self.raw_shape).max()
+        self.num_slice = num_slice
+
+        self.raw_img = self._nn_interpolate(
+            raw_img,
+            rescale_factor=rescale_factor,
+            mode="trilinear",
+            align_corners=False,
+        )
+        self.bfld = self._nn_interpolate(
+            bfld,
+            scale_factor=self.rescale_factor,
+            mode="trilinear",
+            align_corners=False,
+        )
+        self.brainmask = self._nn_interpolate(
+            brainmask, scale_factor=self.rescale_factor, mode="nearest"
+        )
+
+        self.rescale_shape = self.raw_img.data[0].shape
+
+        self.slist0 = self._create_slist(self.rescale_shape[0])
+        self.slist1 = self._create_slist(self.rescale_shape[1])
+        self.slist2 = self._create_slist(self.rescale_shape[2])
+
+        self.batch_size = self.raw_img.shape[0]
+        self.batch_len = len(self.slist0) + len(self.slist1) + len(self.slist2)
+
+    def __len__(self) -> int:
+        """Return batch size * batch length."""
+        return self.batch_size * self.batch_len
+
+    def _nn_interpolate(
+        self, in_img: torch.Tensor | None = None, **kwargs: dict[str, Any]
+    ) -> torch.Tensor | None:
+        if not in_img:
             return
-        raw_shape=rimg.data[0].shape
-        max_dim=torch.tensor(raw_shape).max()
-        rescale_factor=float(rescale_dim)/float(max_dim)
 
-        uns_rimg=torch.unsqueeze(rimg, 0)
-        uns_rimg=nn.functional.interpolate(uns_rimg, scale_factor=rescale_factor, mode="trilinear", align_corners=False)
-        rimg=torch.squeeze(uns_rimg, 0)
+        unsqueezed_img = torch.unsqueeze(in_img, 0)
+        unsqueezed_img = nn.functional.interpolate(
+            unsqueezed_img,
+            kwargs.get("rescale_factor"),
+            kwargs.get("mode", "Linear"),
+            kwargs.get("align_corners", False),
+        )
+        return torch.squeeze(unsqueezed_img, 0)
 
-        if isinstance(bfld, torch.Tensor):
-            uns_bfld=torch.unsqueeze(bfld, 0)
-            uns_bfld=nn.functional.interpolate(uns_bfld, scale_factor=rescale_factor, mode="trilinear", align_corners=False)
-            bfld=torch.squeeze(uns_bfld, 0)
-
-        if isinstance(bmsk, torch.Tensor):
-            uns_bmsk=torch.unsqueeze(bmsk.float(), 0)
-            uns_bmsk=nn.functional.interpolate(uns_bmsk, scale_factor=rescale_factor, mode="nearest")
-            bmsk=torch.squeeze(uns_bmsk.long(), 0)
-        
-        rescale_shape=rimg.data[0].shape
-        slist0=list()
-        for i in range(rescale_shape[0]-num_slice+1):
-            slist0.append(range(i, i+num_slice))
-        self.slist0=slist0
-        
-        slist1=list()
-        for i in range(rescale_shape[1]-num_slice+1):
-            slist1.append(range(i, i+num_slice))
-        self.slist1=slist1
-        
-        slist2=list()
-        for i in range(rescale_shape[2]-num_slice+1):
-            slist2.append(range(i, i+num_slice))
-        self.slist2=slist2
-        
-        self.rimg=rimg
-        self.bfld=bfld
-        self.bmsk=bmsk
-        
-        self.batch_size=rimg.shape[0]
-        self.batch_len=len(self.slist0)+len(self.slist1)+len(self.slist2)
-        self.num_slice=num_slice
-        self.rescale_dim=rescale_dim
-        self.rescale_factor=rescale_factor
-        self.rescale_shape=rescale_shape
-        self.raw_shape=raw_shape
-    
-    def get_rescale_factor(self):
-        return self.rescale_factor
-
-    def get_rescale_shape(self):
-        return self.rescale_shape
-
-    def get_raw_shape(self):
-        return self.raw_shape
-
-    def get_rescale_dim(self):
-        return self.rescale_dim
+    def _create_slist(self, dim_length: int) -> list[range]:
+        """Helper to create list of ranges."""
+        return [
+            range(idx, idx + self.num_slice)
+            for idx in range(dim_length - self.num_slice + 1)
+        ]
 
     def get_one_directory(self, axis=0):
-        if axis==0:
-            ind=range(0, len(self.slist0))
-            slist=self.slist0
-        elif axis==1:
-            ind=range(len(self.slist0), len(self.slist0)+len(self.slist1))
-            slist=self.slist1
-        elif axis==2:
-            ind=range(len(self.slist0)+len(self.slist1), 
-                len(self.slist0)+len(self.slist1)+len(self.slist2))
-            slist=self.slist2
-        
-        slice_weight=np.zeros(slist[-1][-1]+1)
+        if axis == 0:
+            ind = range(0, len(self.slist0))
+            slist = self.slist0
+        elif axis == 1:
+            ind = range(len(self.slist0), len(self.slist0) + len(self.slist1))
+            slist = self.slist1
+        elif axis == 2:
+            ind = range(
+                len(self.slist0) + len(self.slist1),
+                len(self.slist0) + len(self.slist1) + len(self.slist2),
+            )
+            slist = self.slist2
+
+        slice_weight = np.zeros(slist[-1][-1] + 1)
         for l in slist:
-            slice_weight[l]+=1
-        
-        slice_data=list()
+            slice_weight[l] += 1
+
+        slice_data = list()
         for i in ind:
             slice_data.append(self.__getitem__(i))
-        
+
         return slice_data, slist, slice_weight
 
-    def __len__(self):
-        list_len=self.batch_size*self.batch_len
-        return list_len
-    
-    def __getitem__(self, index):
-        bind=int(index/self.batch_len)
-        index=index%self.batch_len
-        if index<len(self.slist0):
-            sind=self.slist0[index]
+    def __getitem__(self, idx: int) -> torch.Tensor | tuple[torch.Tensor, ...]:
+        """Get dataset blocks for a given index."""
+        bind = int(idx / self.batch_len)
+        idx = idx % self.batch_len
 
-            rimg_tmp=self.rimg.data[bind][sind, :, :]
-
-            if isinstance(self.bfld, torch.Tensor):
-                bfld_tmp=self.bfld.data[bind][sind, :, :]
-
-            if isinstance(self.bmsk, torch.Tensor):
-                bmsk_tmp=self.bmsk.data[bind][sind, :, :]
-        elif index<len(self.slist1)+len(self.slist0):
-            sind=self.slist1[index-len(self.slist0)]
-
-            rimg_tmp=self.rimg.data[bind][:, sind, :]
-            rimg_tmp=rimg_tmp.permute([1, 0, 2])
-
-            if isinstance(self.bfld, torch.Tensor):
-                bfld_tmp=self.bfld.data[bind][:, sind, :]
-                bfld_tmp=bfld_tmp.permute([1, 0, 2])
-
-            if isinstance(self.bmsk, torch.Tensor):
-                bmsk_tmp=self.bmsk.data[bind][:, sind, :]
-                bmsk_tmp=bmsk_tmp.permute([1, 0, 2])
+        if idx < len(self.slist0):
+            slice_range = self.slist0[idx]
+            raw_img_tmp, bfld_tmp, brainmask_tmp = self._get_slices(
+                bind, slice_range, 0
+            )
+        elif idx < len(self.slist0) + len(self.slist1):
+            slice_range = self.slist1[idx - len(self.slist0)]
+            raw_img_tmp, bfld_tmp, brainmask_tmp = self._get_slices(
+                bind, slice_range, 1
+            )
         else:
-            sind=self.slist2[index-len(self.slist0)-len(self.slist1)]
+            slice_range = self.slist2[idx - len(self.slist0) - len(self.slist1)]
+            raw_img_tmp, bfld_tmp, brainmask_tmp = self._get_slices(
+                bind, slice_range, 2
+            )
 
-            rimg_tmp=self.rimg.data[bind][:, :, sind]
-            rimg_tmp=rimg_tmp.permute([2, 0, 1])
-            
-            if isinstance(self.bfld, torch.Tensor):
-                bfld_tmp=self.bfld.data[bind][:, :, sind]
-                bfld_tmp=bfld_tmp.permute([2, 0, 1])
-        
-            if isinstance(self.bmsk, torch.Tensor):
-                bmsk_tmp=self.bmsk.data[bind][:, :, sind]
-                bmsk_tmp=bmsk_tmp.permute([2, 0, 1])
+        raw_img_blk = self._create_block(raw_img_tmp)
+        bfld_blk = self._create_block(bfld_tmp, fill_value=1) if bfld_tmp else None
+        brainmask_blk = (
+            self._create_block(brainmask_tmp, dtype=torch.long)
+            if brainmask_tmp
+            else None
+        )
 
-        extend_dim=self.rescale_dim
-        slice_shape=rimg_tmp.data[0].shape
+        if bfld_blk and brainmask_blk:
+            return raw_img_blk, bfld_blk, brainmask_blk
+        elif bfld_blk:
+            return raw_img_blk, bfld_blk
+        elif brainmask_blk:
+            return raw_img_blk, brainmask_blk
+        else:
+            return raw_img_blk
 
-        rimg_blk=torch.zeros([self.num_slice, extend_dim, extend_dim], dtype=torch.float32)
-        rimg_blk[:, :slice_shape[0], :slice_shape[1]]=rimg_tmp
-        
-        if isinstance(self.bfld, torch.Tensor):
-            bfld_blk=torch.ones([self.num_slice, extend_dim, extend_dim], dtype=torch.float32)
-            bfld_blk[:, :slice_shape[0], :slice_shape[1]]=bfld_tmp
-        
-            return rimg_blk, bfld_blk, bmsk_blk
+    def _get_slices(
+        self, bind: int, slice_range: range, axis: int
+    ) -> tuple[NDArray, ...]:
+        """Helper method to get slices of the data along a specified axis."""
+        if axis == 0:
+            raw_img_tmp = self.raw_img.data[bind][slice_range, :, :]
+            bfld_tmp = (
+                self.bfld.data[bind][slice_range, :, :]
+                if isinstance(self.bfld, torch.Tensor)
+                else None
+            )
+            brainmask_tmp = (
+                self.brainmask.data[bind][slice_range, :, :]
+                if isinstance(self.brainmask, torch.Tensor)
+                else None
+            )
+        elif axis == 1:
+            raw_img_tmp = self.raw_img.data[bind][:, slice_range, :].permute([1, 0, 2])
+            bfld_tmp = (
+                self.bfld.data[bind][:, slice_range, :].permute([1, 0, 2])
+                if isinstance(self.bfld, torch.Tensor)
+                else None
+            )
+            brainmask_tmp = (
+                self.brainmask.data[bind][:, slice_range, :].permute([1, 0, 2])
+                if isinstance(self.brainmask, torch.Tensor)
+                else None
+            )
+        elif axis == 2:
+            raw_img_tmp = self.raw_img.data[bind][:, :, slice_range].permute([2, 0, 1])
+            bfld_tmp = (
+                self.bfld.data[bind][:, :, slice_range].permute([2, 0, 1])
+                if isinstance(self.bfld, torch.Tensor)
+                else None
+            )
+            brainmask_tmp = (
+                self.brainmask.data[bind][:, :, slice_range].permute([2, 0, 1])
+                if isinstance(self.brainmask, torch.Tensor)
+                else None
+            )
+        return raw_img_tmp, bfld_tmp, brainmask_tmp
 
-        if isinstance(self.bmsk, torch.Tensor):
-            bmsk_blk=torch.zeros([self.num_slice, extend_dim, extend_dim], dtype=torch.long)
-            bmsk_blk[:, :slice_shape[0], :slice_shape[1]]=bmsk_tmp
-            return rimg_blk, bmsk_blk
+    def _create_block(
+        self,
+        data_tmp: torch.Tensor,
+        extend_dim: int | None = None,
+        dtype: torch.dtype = torch.float32,
+        fill_value: int = 0,
+    ) -> torch.Tensor:
+        """Helper to create a block of data with given dimensions and fill values."""
+        extend_dim = extend_dim or self.rescale_dim
+        block = torch.full(
+            [self.num_slice, extend_dim, extend_dim], fill_value, dtype=dtype
+        )
+        slice_shape = data_tmp.shape
+        block[:, : slice_shape[1], : slice_shape[2]] = data_tmp
+        return block[:, : slice_shape[1], : slice_shape[2]]
 
-        return rimg_blk
 
-
-if __name__ == '__main__':
-    volume_dataset=VolumeDataset(rimg_in=None, cimg_in='../site-ucdavis/TrainT1w', bmsk_in='../site-ucdavis/TrainMask')
-    volume_loader=data.DataLoader(dataset=volume_dataset, batch_size=1, shuffle=True)
-    for i, (cimg, bmsk) in enumerate(volume_loader):
-        block_dataset=BlockDataset(rimg=cimg, bfld=None, bmsk=bmsk, num_slice=3, rescale_dim=256)
-        block_loader=data.DataLoader(dataset=block_dataset, batch_size=20, shuffle=True)
-        for j, (cimg_blk, bmsk_blk) in enumerate(block_loader):
-            print(bmsk_blk.shape)
+# Unit test?
+# if __name__ == "__main__":
+#     volume_dataset = VolumeDataset(
+#         raw_img_in=None,
+#         corrected_img_in="../site-ucdavis/TrainT1w",
+#         brainmask_in="../site-ucdavis/TrainMask",
+#     )
+#     volume_loader = data.DataLoader(dataset=volume_dataset, batch_size=1, shuffle=True)
+#     for i, (corrected_img, brainmask) in enumerate(volume_loader):
+#         block_dataset = BlockDataset(
+#             raw_img=corrected_img,
+#             bfld=None,
+#             brainmask=brainmask,
+#             num_slice=3,
+#             rescale_dim=256,
+#         )
+#         block_loader = data.DataLoader(
+#             dataset=block_dataset, batch_size=20, shuffle=True
+#         )
+#         for j, (corrected_img_blk, brainmask_blk) in enumerate(block_loader):
+#             print(brainmask_blk.shape)
