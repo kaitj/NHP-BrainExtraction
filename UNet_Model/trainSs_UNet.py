@@ -14,100 +14,104 @@ from function import predict_volumes
 from model import UNet2d
 from torch.autograd import Variable
 from torch.utils.data import DataLoader
-from torch.utils.data.sampler import SubsetRandomSampler
 
-if __name__ == "__main__":
-    NoneType = type(None)
-    # Argument
+
+def create_parser() -> argparse.ArgumentParser:
+    """Parser for training a model."""
     parser = argparse.ArgumentParser(
-        description="Training Model",
+        description="Training model",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    optional = parser._action_groups.pop()
+
+    # Required arguments
     required = parser.add_argument_group("required arguments")
-    # Required Option
     required.add_argument(
-        "-trt1w", "--train_t1w", type=str, required=True, help="Train T1w Directory"
+        "-trt1w", "--train_t1w", type=str, required=True, help="Train T1w directory."
     )
     required.add_argument(
-        "-trmsk", "--train_msk", type=str, required=True, help="Train Mask Directory"
+        "-trmsk", "--train_msk", type=str, required=True, help="Train mask directory."
     )
     required.add_argument(
-        "-out", "--out_dir", type=str, required=True, help="Output Directory"
+        "-out", "--out_dir", type=str, required=True, help="Output directory."
     )
-    # Optional Option
+
+    # Optional arguments
+    optional = parser.add_argument_group("optional arguments")
     optional.add_argument(
-        "-vt1w", "--validate_t1w", type=str, help="Validation T1w Directory"
+        "-vt1w", "--validate_t1w", type=str, help="Validation T1w directory."
     )
     optional.add_argument(
-        "-vmsk", "--validate_msk", type=str, help="Validation Mask Directory"
+        "-vmsk", "--validate_msk", type=str, help="Validation mask directory."
     )
-    optional.add_argument("-init", "--init_model", type=str, help="Init Model")
+    optional.add_argument("-init", "--init_model", type=str, help="Initialize model.")
     optional.add_argument(
         "-slice",
         "--input_slice",
         type=int,
         default=3,
-        help="Number of Slice for Model Input",
+        help="Number of slices for model input.",
     )
     optional.add_argument(
-        "-conv", "--conv_block", type=int, default=5, help="Number of UNet Block"
+        "-conv", "--conv_block", type=int, default=5, help="Number of UNet blocks."
+    )
+    optional.add_argument(
+        "-kernel", "--kernel_root", type=int, default=16, help="Number of kernel roots."
     )
     optional.add_argument(
         "-rescale",
         "--rescale_dim",
         type=int,
         default=256,
-        help="Number of the Root of Kernel",
+        help="Rescale to number of models.",
     )
     optional.add_argument(
-        "-kernel",
-        "--kernel_root",
-        type=int,
-        default=16,
-        help="Number of the Root of Kernel",
+        "-epoch", "--num_epoch", type=int, default=40, help="Number of epochs."
     )
     optional.add_argument(
-        "-epoch", "--num_epoch", type=int, default=40, help="Number of Epoch"
+        "-lr", "--learning_rate", type=float, default=0.0001, help="Learning rate."
     )
-    optional.add_argument(
-        "-lr", "--learning_rate", type=float, default=0.0001, help="Number of Epoch"
-    )
-    parser._action_groups.append(optional)
 
-    if len(sys.argv) == 1:
-        parser.print_help()
-        sys.exit(1)
+
+def check_train_directory(in_dir: str) -> None:
+    """Helper to check validity of provided directory path."""
+    if not os.path.exists(in_dir):
+        raise NotADirectoryError(
+            f"{in_dir} is an invalid directory, please check again!"
+        )
+
+
+def main() -> None:
+    """Main entry point for training a model."""
+    parser = create_parser()
     args = parser.parse_args()
 
-    print(
-        "===================================Training Model==================================="
-    )
-
-    if not os.path.exists(args.train_msk) or not os.path.exists(args.train_t1w):
-        print("Invalid train directory, please check again!")
-        sys.exit(2)
+    # Check inputs
+    check_train_directory(args.train_msk)
+    check_train_directory(args.train_t1w)
 
     use_validate = True
     if (
-        isinstance(args.validate_msk, NoneType)
-        or isinstance(args.validate_t1w, NoneType)
+        not args.validate_msk
         or not os.path.exists(args.validate_msk)
+        or not args.validate_t1w
         or not os.path.exists(args.validate_t1w)
     ):
         use_validate = False
-        print("NOTE: Do not use validate dataset.")
-
+        print("Not validating dataset.")
     use_gpu = torch.cuda.is_available()
+
+    # Start training model
+    print("Training model".center(88, "="))
+
     model = UNet2d(
         dim_in=args.input_slice,
         num_conv_block=args.conv_block,
         kernel_root=args.kernel_root,
     )
+
     if isinstance(args.init_model, str):
         if not os.path.exists(args.init_model):
-            print("Invalid init model, please check again!")
-            sys.exit(2)
+            raise ValueError("Invalid initialization model, please check again!")
         checkpoint = torch.load(args.init_model, map_location={"cuda:0": "cpu"})
         model.load_state_dict(checkpoint["state_dict"])
 
@@ -132,11 +136,10 @@ if __name__ == "__main__":
 
     blk_batch_size = 20
 
-    if not os.path.exists(args.out_dir):
-        os.mkdir(args.out_dir)
+    os.makedirs(args.out_dir, exist_ok=True)
 
     # Init Dice and Loss Dict
-    DL_Dict = dict()
+    dl_dict = dict()
     dice_list = list()
     loss_list = list()
 
@@ -152,8 +155,8 @@ if __name__ == "__main__":
             save_nii=False,
             save_dice=True,
         )
-        dice_array = np.array([v for v in dice_dict.values()])
-        DL_Dict["origin_dice"] = dice_array
+        dice_array = np.array([val for val in dice_dict.values()])
+        dl_dict["origin_dice"] = dice_array
         print("Origin Dice: %.4f +/- %.4f" % (dice_array.mean(), dice_array.std()))
 
     for epoch in range(0, args.num_epoch):
@@ -217,7 +220,7 @@ if __name__ == "__main__":
                 brainmask_in=args.validate_msk,
                 save_dice=True,
             )
-            dice_array = np.array([v for v in dice_dict.values()])
+            dice_array = np.array([val for val in dice_dict.values()])
             dice_list.append(dice_array)
             print(
                 "\tEpoch: %d; Dice: %.4f +/- %.4f; Loss: %.4f"
@@ -238,7 +241,7 @@ if __name__ == "__main__":
             torch.save(
                 checkpoint, os.path.join(args.out_dir, "model-%.2d-epoch" % (epoch))
             )
-    DL_Dict["dice"] = dice_list
-    DL_Dict["loss"] = loss_list
+    dl_dict["dice"] = dice_list
+    dl_dict["loss"] = loss_list
     with open(os.path.join(args.out_dir, "DiceAndLoss.pkl"), "wb") as handle:
         pickle.dump((dice_list, loss_list), handle)

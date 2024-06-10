@@ -33,7 +33,7 @@ def create_parser() -> argparse.ArgumentParser:
     )
 
     # Optional arguments
-    optional = parser.add_argument_group("optional arguments.")
+    optional = parser.add_argument_group("optional arguments")
     optional.add_argument(
         "-slice",
         "--input_slice",
@@ -67,7 +67,7 @@ def check_test_directory(in_dir: str) -> None:
 
 
 def main() -> None:
-    """Main entry point."""
+    """Main entry point for testing a model."""
     parser = create_parser()
     args = parser.parse_args()
 
