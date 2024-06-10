@@ -2,83 +2,83 @@
 import argparse
 import os
 import pickle
-import sys
 
-import nibabel as nib
 import numpy as np
-import scipy.ndimage as snd
 import torch
 import torch.nn as nn
-from dataset import BlockDataset, VolumeDataset
 from function import predict_volumes
-from model import MultiSliceBcUNet, MultiSliceModel, MultiSliceSsUNet, UNet2d
-from torch.autograd import Variable
-from torch.utils.data import DataLoader
+from model import UNet2d
 
-if __name__ == "__main__":
-    NoneType = type(None)
-    # Argument
+
+def create_parser() -> argparse.ArgumentParser:
+    """Parser for testing a model."""
     parser = argparse.ArgumentParser(
-        description="Testing Model",
+        description="Testing model",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    optional = parser._action_groups.pop()
+
+    # Required arguments
     required = parser.add_argument_group("required arguments")
-    # Required Option
     required.add_argument(
-        "-tet1w", "--test_t1w", type=str, required=True, help="Test T1w Directory"
+        "-tet1w", "--test_t1w", type=str, required=True, help="Test T1w directory."
     )
     required.add_argument(
-        "-temsk", "--test_msk", type=str, required=True, help="Test Mask Directory"
+        "-temsk", "--test_msk", type=str, required=True, help="Test mask directory."
     )
     required.add_argument(
-        "-out", "--out_dir", type=str, required=True, help="Output Directory"
+        "-out", "--out_dir", type=str, required=True, help="Output directory."
     )
     required.add_argument(
-        "-model", "--test_model", type=str, required=True, help="Test Model"
+        "-model", "--test_model", type=str, required=True, help="Test model."
     )
-    # Optional Option
+
+    # Optional arguments
+    optional = parser.add_argument_group("optional arguments.")
     optional.add_argument(
         "-slice",
         "--input_slice",
         type=int,
         default=3,
-        help="Number of Slice for Model Input",
+        help="Number of slices for model input.",
     )
     optional.add_argument(
-        "-conv", "--conv_block", type=int, default=5, help="Number of UNet Block"
+        "-conv", "--conv_block", type=int, default=5, help="Number of UNet blocks."
     )
     optional.add_argument(
-        "-kernel",
-        "--kernel_root",
-        type=int,
-        default=16,
-        help="Number of the Root of Kernel",
+        "-kernel", "--kernel_root", type=int, default=16, help="Number of kernel roots."
     )
     optional.add_argument(
         "-rescale",
         "--rescale_dim",
         type=int,
         default=256,
-        help="Number of the Root of Kernel",
+        help="Rescale to number of voxels.",
     )
-    parser._action_groups.append(optional)
-    if len(sys.argv) == 1:
-        parser.print_help()
-        sys.exit(1)
+
+    return parser
+
+
+def check_test_directory(in_dir: str) -> None:
+    """Helper to check validity of provided directory path."""
+    if not os.path.exists(in_dir):
+        raise NotADirectoryError(
+            f"{in_dir} is an invalid directory, please check again!"
+        )
+
+
+def main() -> None:
+    """Main entry point."""
+    parser = create_parser()
     args = parser.parse_args()
 
-    print(
-        "===================================Testing Model===================================="
-    )
-
-    if not os.path.exists(args.test_msk) or not os.path.exists(args.test_t1w):
-        print("Invalid test directory, please check again!")
-        sys.exit(2)
-
+    # Check inputs
+    check_test_directory(args.test_msk)
+    check_test_directory(args.test_t1w)
     if not os.path.exists(args.test_model):
-        print("Invalid test model, please check again!")
-        sys.exit(2)
+        raise ValueError("Invalid test model, please check again!")
+
+    # Start testing model
+    print("Testing model".center(88, "="))
 
     train_model = UNet2d(
         dim_in=args.input_slice,
@@ -89,6 +89,7 @@ if __name__ == "__main__":
     train_model.load_state_dict(checkpoint["state_dict"])
 
     model = nn.Sequential(train_model, nn.Softmax2d())
+
     dice_dict = predict_volumes(
         model,
         raw_img_in=None,
@@ -99,7 +100,11 @@ if __name__ == "__main__":
         nii_outdir=args.out_dir,
         save_dice=True,
     )
-    dice_array = np.array([v for v in dice_dict.values()])
+    dice_array = np.array([val for val in dice_dict.values()])
     print("\t%.4f +/- %.4f" % (dice_array.mean(), dice_array.std()))
-    with open(os.path.join(args.out_dir, "Dice.pkl"), "wb") as f:
-        pickle.dump(dice_dict, f)
+    with open(os.path.join(args.out_dir, "Dice.pkl"), "wb") as out_fpath:
+        pickle.dump(dice_dict, out_fpath)
+
+
+if __name__ == "__main__":
+    main()
