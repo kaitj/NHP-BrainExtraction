@@ -167,8 +167,8 @@ def process_volume(
     dice_dict: dict[str, float] | None,
 ) -> None:
     """Helper function to process volumes."""
-    rescale_shape = block_dataset.get_rescale_shape()
-    raw_shape = block_dataset.get_raw_shape()
+    rescale_shape = block_dataset.rescale_shape
+    raw_shape = block_dataset.raw_shape
 
     for od in range(3):
         pr_bmsk = process_slice(od, module, block_dataset, ptype, rescale_dim)
@@ -269,7 +269,7 @@ def postprocess_mask(pr_bmsk: torch.Tensor, ed_iter: int) -> np.ndarray:
 
 def get_volume_name(volume_dataset: VolumeDataset) -> str:
     """Get name of current volume."""
-    t1w_nii = volume_dataset.getCurCimgNii()
+    t1w_nii = volume_dataset.cur_cimg_nii
     t1w_path = t1w_nii.get_filename()
     t1w_dir, t1w_file = os.path.split(t1w_path)
     t1w_dir = t1w_dir if t1w_dir else os.curdir
@@ -284,7 +284,7 @@ def save_predicted_mask_as_nifti(
     nii_outdir: str | None,
 ) -> None:
     """Save predicted mask as Nifti."""
-    t1w_nii = volume_dataset.getCurCimgNii()
+    t1w_nii = volume_dataset.cur_cimg_nii
     t1w_aff = t1w_nii.affine
     t1w_shape = t1w_nii.shape
     t1w_dir = os.path.dirname(t1w_nii.get_filename())
