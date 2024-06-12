@@ -21,7 +21,7 @@ ruff = "^0.4.6"
 pdoc = "^13.1.1"
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+pythonpath = ["."]
 testpaths = []
 
 [tool.mypy]
@@ -53,7 +53,7 @@ exclude = [
 ]
 line-length = 88
 indent-width = 4
-src = ["src"]
+src = ["."]
 target-version = "py37"
 
 [tool.ruff.lint]
@@ -61,6 +61,7 @@ select = ["ANN", "D", "E", "F", "I"]
 ignore = [
     "ANN101", # self should not be annotated.
     "ANN102", # cls should not be annotated.
+    "D107",   # ignore missing docstring in `__init__`
 ]
 fixable = ["ALL"]
 unfixable = []
